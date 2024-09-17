@@ -1,0 +1,18 @@
+{
+    "name": "clypper/lightweight-minifier",
+    "description": "Minifies CSS and JS files in the plugins directory with backup and restoration options.",
+    "type": "wordpress-plugin",
+    "require": {
+        "matthiasmullie/minify": "^1.3"
+    },
+    "license": "GPL-2.0-or-later",
+    "autoload": {
+        "psr-4": {
+            "CLM\\": "includes/"
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.3",
+        "wp-phpunit/wp-phpunit": "^6.6"
+    }
+}
