@@ -17,6 +17,11 @@
 /wp-*.php
 /xmlrpc.php
 
+composer.lock
+wordpress
+*.idea
+vendor
+
 # Configuration
 wp-config.php
 
@@ -47,3 +52,4 @@ wp-config.php
 # uncomment the next line
 #/wp-content/themes
 /vendor/
+/.idea/
