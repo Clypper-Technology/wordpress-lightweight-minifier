@@ -8,6 +8,8 @@ License: GPL2
 Text Domain: clypper-lightweight-minifier
 */
 
+use CLM\CLM_Plugin;
+
 if (!defined('ABSPATH')) {
     exit; // Exit if accessed directly
 }

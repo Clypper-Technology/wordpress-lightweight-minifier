@@ -10,6 +10,7 @@ use FilesystemIterator;
 use MatthiasMullie\Minify;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use RecursiveCallbackFilterIterator;
 
 class CLM_Minifier {
 
@@ -33,7 +34,20 @@ class CLM_Minifier {
     private $last_minification_summary = null;
     private $last_restoration_summary = null;
 
+    /**
+     * Backup directory path.
+     */
+    private string $backup_dir;
+
     public function __construct() {
+        // Define the backup directory
+        $this->backup_dir = trailingslashit(WP_CONTENT_DIR) . 'clm-backups/';
+
+        // Ensure the backup directory exists
+        if (!file_exists($this->backup_dir)) {
+            wp_mkdir_p($this->backup_dir);
+        }
+
         // Schedule daily minification
         add_action('clm_daily_minification', array($this, 'minify_files'));
 
@@ -51,19 +65,36 @@ class CLM_Minifier {
      * @param bool $is_manual Indicates if the minification is triggered manually.
      */
     public function minify_files($is_manual = false) {
-        $directories = array(WP_PLUGIN_DIR, ABSPATH . 'wp-includes');
+        // Directories to process
+        $directories = array(ABSPATH . 'wp-includes', ABSPATH . 'wp-content');
 
         foreach ($directories as $base_dir) {
             // Normalize base directory path
             $base_dir = rtrim($base_dir, '/\\') . DIRECTORY_SEPARATOR;
 
-            // Initialize Recursive Directory Iterator
-            $iterator = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($base_dir, FilesystemIterator::SKIP_DOTS)
-            );
+            // Initialize Recursive Directory Iterator with a filter to exclude the backup directory
+            $directory_iterator = new RecursiveDirectoryIterator($base_dir, FilesystemIterator::SKIP_DOTS);
+            $filter_iterator = new RecursiveCallbackFilterIterator($directory_iterator, function ($current, $key, $iterator) use ($base_dir) {
+                // Exclude the backup directory
+                if ($current->isDir()) {
+                    $dir_path = $current->getRealPath();
+                    if ($dir_path === false) {
+                        return false;
+                    }
+                    // Normalize backup directory path
+                    $normalized_backup_dir = realpath($this->backup_dir);
+                    if ($normalized_backup_dir === false) {
+                        return false;
+                    }
+                    return strpos($dir_path, $normalized_backup_dir) !== 0;
+                }
+                return true;
+            });
+
+            $iterator = new RecursiveIteratorIterator($filter_iterator);
 
             foreach ($iterator as $file) {
-                if ( ! $file->isFile() ) {
+                if (!$file->isFile()) {
                     continue;
                 }
 
@@ -84,26 +115,21 @@ class CLM_Minifier {
                     $relative_path = ltrim($relative_path, '/\\');
 
                     // Define backup path
-                    $backup_path = CLM_BACKUP_DIR . $relative_path;
+                    $backup_path = $this->backup_dir . $relative_path;
 
                     // Ensure the backup directory exists
-                    $backup_dir = dirname($backup_path);
-                    if (!file_exists($backup_dir)) {
-                        if (wp_mkdir_p($backup_dir)) {
+                    $backup_subdir = dirname($backup_path);
+                    if (!file_exists($backup_subdir)) {
+                        if (wp_mkdir_p($backup_subdir)) {
                             // Directory created successfully
                         } else {
                             $this->failed_files++;
-                            $this->error_details[] = "Failed to create backup directory: {$backup_dir}";
+                            $this->error_details[] = "Failed to create backup directory: {$backup_subdir}";
                             continue; // Skip this file if backup directory can't be created
                         }
                     }
 
                     // Move the original file to backup directory
-                    if (file_exists($backup_path)) {
-                        // Optionally, you can delete or overwrite existing backups
-                        unlink($backup_path);
-                    }
-
                     if (!rename($filepath, $backup_path)) {
                         $this->failed_files++;
                         $this->error_details[] = "Failed to move file to backup: {$filepath}";
@@ -148,7 +174,7 @@ class CLM_Minifier {
      * Restore original CSS and JS files from backups.
      */
     public function restore_files() {
-        $backup_dir = CLM_BACKUP_DIR;
+        $backup_dir = $this->backup_dir;
         if (!file_exists($backup_dir)) {
             // Store error for display
             $this->last_restoration_summary = array(
@@ -166,7 +192,7 @@ class CLM_Minifier {
         );
 
         foreach ($iterator as $file) {
-            if ( ! $file->isFile() ) {
+            if (!$file->isFile()) {
                 continue;
             }
 
@@ -198,14 +224,20 @@ class CLM_Minifier {
                 }
             }
 
-            // Move the backup file back to original location
+            // Delete the minified file before restoring
             if (file_exists($original_path)) {
-                // Delete the minified file before restoring
-                unlink($original_path);
+                if (!unlink($original_path)) {
+                    $this->failed_files++;
+                    $this->error_details[] = "Failed to delete minified file before restoration: {$original_path}";
+                    continue;
+                }
             }
 
+            // Move the backup file back to original location
             if (rename($backup_path, $original_path)) {
                 $this->success_files++;
+                // Delete the backup file after successful restoration
+                // (Since it's already moved, no need to delete unless backups are kept for history)
             } else {
                 $this->failed_files++;
                 $this->error_details[] = "Failed to restore: {$original_path}";
@@ -304,6 +336,18 @@ class CLM_Minifier {
         $this->total_files    = 0;
         $this->success_files  = 0;
         $this->failed_files   = 0;
-        $this->error_details  = array();
+        $this->error_details  = [];
+    }
+
+    /**
+     * Log error messages to the debug log.
+     *
+     * @param string $message The error message to log.
+     */
+    private function log_error($message) {
+        if (WP_DEBUG === true) {
+            error_log('[CLM Minifier] ' . $message);
+        }
+        $this->error_details[] = $message;
     }
 }
